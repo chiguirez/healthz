@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package proto.health.v1;
+
+option go_package = "proto/health/v1;proto";
+
+import "google/api/annotations.proto";
+
+message CheckRequest {
+}
+message PingRequest {
+}
+
+message CheckResponse {
+    enum ServingStatus {
+        SERVING_STATUS_UNSPECIFIED = 0;
+        SERVING_STATUS_SERVING = 1;
+        SERVING_STATUS_NOT_SERVING = 2;
+    }
+    ServingStatus status = 1;
+}
+
+message PongResponse {
+    bool pong = 1;
+}
+
+service HealthService {
+    rpc Check (CheckRequest) returns (CheckResponse) {
+        option (google.api.http) = {
+            get: "/v1/check"
+         };
+    };
+
+    rpc Ping (PingRequest) returns (PongResponse) {
+        option (google.api.http) = {
+            get: "/v1/ping"
+         };
+    };
+}
