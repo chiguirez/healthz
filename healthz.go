@@ -11,6 +11,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
 	proto "github.com/chiguirez/healthz/proto/health/v1"
@@ -23,9 +24,7 @@ type checker struct {
 	list []HealthChecker
 }
 
-var ErrUnsucessful = errors.New("unsuccessful health check")
-
-func (c checker) Check(ctx context.Context, _ *proto.CheckRequest) (*proto.CheckResponse, error) {
+func (c checker) Check(ctx context.Context, request *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
 	g, _ctx := errgroup.WithContext(ctx)
 
 	for _, chkr := range c.list {
@@ -33,7 +32,7 @@ func (c checker) Check(ctx context.Context, _ *proto.CheckRequest) (*proto.Check
 			func(chkr HealthChecker) func() error {
 				return func() error {
 					if !chkr.HealthCheck(_ctx) {
-						return fmt.Errorf("%w for dependency %v", ErrUnsucessful, chkr)
+						return fmt.Errorf("%w for dependency %v", ErrUnsuccessful, chkr)
 					}
 
 					return nil
@@ -43,15 +42,21 @@ func (c checker) Check(ctx context.Context, _ *proto.CheckRequest) (*proto.Check
 	}
 
 	if g.Wait() != nil {
-		return &proto.CheckResponse{
-			Status: proto.CheckResponse_SERVING_STATUS_NOT_SERVING,
+		return &grpc_health_v1.HealthCheckResponse{
+			Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
 		}, nil
 	}
 
-	return &proto.CheckResponse{
-		Status: proto.CheckResponse_SERVING_STATUS_SERVING,
+	return &grpc_health_v1.HealthCheckResponse{
+		Status: grpc_health_v1.HealthCheckResponse_SERVING,
 	}, nil
 }
+
+func (c checker) Watch(request *grpc_health_v1.HealthCheckRequest, server grpc_health_v1.Health_WatchServer) error {
+	panic("implement me")
+}
+
+var ErrUnsuccessful = errors.New("unsuccessful health check")
 
 func (c checker) Ping(_ context.Context, _ *proto.PingRequest) (*proto.PongResponse, error) {
 	return &proto.PongResponse{
@@ -95,6 +100,7 @@ func Register(opts ...HealthCheckOptions) {
 	}
 
 	proto.RegisterHealthServiceServer(_checker.srv, _checker)
+	grpc_health_v1.RegisterHealthServer(_checker.srv, _checker)
 
 	if deferredStartFn != nil {
 		deferredStartFn()

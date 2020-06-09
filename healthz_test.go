@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	proto "github.com/chiguirez/healthz/proto/health/v1"
 )
@@ -26,22 +27,23 @@ func TestHealthCheck(t *testing.T) {
 		}
 		defer conn.Close()
 
-		client := proto.NewHealthServiceClient(conn)
+		checkClient := grpc_health_v1.NewHealthClient(conn)
+		pingClient := proto.NewHealthServiceClient(conn)
 
 		t.Run("When Checked via GRPC", func(t *testing.T) {
-			check, err := client.Check(context.Background(), &proto.CheckRequest{})
+			check, err := checkClient.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{})
 			if err != nil {
 				t.Fatalf("did not connect: %v", err)
 			}
 			t.Run("Then is serving", func(t *testing.T) {
-				if check.Status.String() != "SERVING_STATUS_SERVING" {
+				if check.Status.String() != "SERVING" {
 					t.Fatalf("status supposed to be SERVING, got: %v instead", check)
 				}
 			})
 		})
 
 		t.Run("When Pinged via GRPC Then Pong is always true", func(t *testing.T) {
-			pong, err := client.Ping(context.Background(), &proto.PingRequest{})
+			pong, err := pingClient.Ping(context.Background(), &proto.PingRequest{})
 			if err != nil {
 				t.Fatalf("did not connect: %v", err)
 			}
@@ -61,15 +63,15 @@ func TestHealthCheck(t *testing.T) {
 		}
 		defer conn.Close()
 
-		client := proto.NewHealthServiceClient(conn)
+		checkClient := grpc_health_v1.NewHealthClient(conn)
 
 		t.Run("When Checked", func(t *testing.T) {
-			check, err := client.Check(context.Background(), &proto.CheckRequest{})
+			check, err := checkClient.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{})
 			if err != nil {
 				t.Fatalf("did not connect: %v", err)
 			}
 			t.Run("Then is not serving", func(t *testing.T) {
-				if check.Status.String() != "SERVING_STATUS_NOT_SERVING" {
+				if check.Status.String() != "NOT_SERVING" {
 					t.Fatalf("status supposed to be NOT_SERVING, got: %v instead", check)
 				}
 			})
@@ -99,15 +101,15 @@ func TestHealthCheck(t *testing.T) {
 		}
 		defer conn.Close()
 
-		client := proto.NewHealthServiceClient(conn)
+		checkClient := grpc_health_v1.NewHealthClient(conn)
 
 		t.Run("When Checked", func(t *testing.T) {
-			check, err := client.Check(context.Background(), &proto.CheckRequest{})
+			check, err := checkClient.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{})
 			if err != nil {
 				t.Fatalf("did not connect: %v", err)
 			}
 			t.Run("Then is serving", func(t *testing.T) {
-				if check.Status.String() != "SERVING_STATUS_SERVING" {
+				if check.Status.String() != "SERVING" {
 					t.Fatalf("status supposed to be SERVING, got: %v instead", check)
 				}
 			})
@@ -117,27 +119,6 @@ func TestHealthCheck(t *testing.T) {
 	t.Run("Given a service and a HealthCheck HTTP Client", func(t *testing.T) {
 		Register()
 		defer Unregister()
-
-		t.Run("When Checked via HTTP", func(t *testing.T) {
-			check, err := http.Get("http://localhost:8081/v1/check")
-			if err != nil {
-				t.Fatalf("did not connect: %v", err)
-			}
-			body, err := ioutil.ReadAll(check.Body)
-			if err != nil {
-				t.Fatalf("error fetching data: %v", err)
-			}
-			v := make(map[string]interface{}, 1)
-			err = json.Unmarshal(body, &v)
-			if err != nil {
-				t.Fatalf("unmarshalling error : %v", err)
-			}
-			t.Run("Then is serving", func(t *testing.T) {
-				if v["status"] != "SERVING_STATUS_SERVING" {
-					t.Fatalf("status supposed to be SERVING, got: %v instead", check)
-				}
-			})
-		})
 
 		t.Run("When Pinged via HTTP Then Pong is always true", func(t *testing.T) {
 			check, err := http.Get("http://localhost:8081/v1/ping")
