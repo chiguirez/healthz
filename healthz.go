@@ -7,12 +7,15 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"reflect"
 
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 
 	proto "github.com/chiguirez/healthz/proto/health/v1"
 )
@@ -32,7 +35,7 @@ func (c checker) Check(ctx context.Context, request *grpc_health_v1.HealthCheckR
 			func(chkr HealthChecker) func() error {
 				return func() error {
 					if !chkr.HealthCheck(_ctx) {
-						return fmt.Errorf("%w for dependency %v", ErrUnsuccessful, chkr)
+						return fmt.Errorf("%w for dependency %v", ErrUnsuccessful, reflect.TypeOf(chkr).String())
 					}
 
 					return nil
@@ -41,10 +44,8 @@ func (c checker) Check(ctx context.Context, request *grpc_health_v1.HealthCheckR
 		)
 	}
 
-	if g.Wait() != nil {
-		return &grpc_health_v1.HealthCheckResponse{
-			Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
-		}, nil
+	if err := g.Wait(); err != nil {
+		return nil, status.New(codes.Unavailable, err.Error()).Err()
 	}
 
 	return &grpc_health_v1.HealthCheckResponse{

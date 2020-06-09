@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 
 	proto "github.com/chiguirez/healthz/proto/health/v1"
 )
@@ -66,13 +68,17 @@ func TestHealthCheck(t *testing.T) {
 		checkClient := grpc_health_v1.NewHealthClient(conn)
 
 		t.Run("When Checked", func(t *testing.T) {
-			check, err := checkClient.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{})
-			if err != nil {
-				t.Fatalf("did not connect: %v", err)
-			}
+			_, err := checkClient.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{})
+
 			t.Run("Then is not serving", func(t *testing.T) {
-				if check.Status.String() != "NOT_SERVING" {
-					t.Fatalf("status supposed to be NOT_SERVING, got: %v instead", check)
+				if err != nil {
+					fromError, ok := status.FromError(err)
+					if !ok {
+						t.Fatalf("did not connect: %v", err)
+					}
+					if fromError.Code() != codes.Unavailable {
+						t.Fatalf("expect Unavailable got : %s instead", fromError.Code().String())
+					}
 				}
 			})
 		})
