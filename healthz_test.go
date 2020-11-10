@@ -1,4 +1,4 @@
-package healthz
+package healthz_test
 
 import (
 	"context"
@@ -11,17 +11,17 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
+	"github.com/chiguirez/healthz"
 	proto "github.com/chiguirez/healthz/proto/health/v1"
 )
 
+//nolint:funlen
 func TestHealthCheck(t *testing.T) {
-
 	t.Run("Given a service and a HealthCheck GRPC Client", func(t *testing.T) {
-		Register()
-		defer Unregister()
+		healthz.Register()
+		defer healthz.Unregister()
 		// Set up a connection to the server.
 		conn, err := grpc.Dial(":8080", grpc.WithInsecure())
 		if err != nil {
@@ -29,11 +29,10 @@ func TestHealthCheck(t *testing.T) {
 		}
 		defer conn.Close()
 
-		checkClient := grpc_health_v1.NewHealthClient(conn)
-		pingClient := proto.NewHealthServiceClient(conn)
+		checkClient := proto.NewHealthClient(conn)
 
 		t.Run("When Checked via GRPC", func(t *testing.T) {
-			check, err := checkClient.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{})
+			check, err := checkClient.Check(context.Background(), &proto.HealthCheckRequest{})
 			if err != nil {
 				t.Fatalf("did not connect: %v", err)
 			}
@@ -45,7 +44,7 @@ func TestHealthCheck(t *testing.T) {
 		})
 
 		t.Run("When Pinged via GRPC Then Pong is always true", func(t *testing.T) {
-			pong, err := pingClient.Ping(context.Background(), &proto.PingRequest{})
+			pong, err := checkClient.Ping(context.Background(), &proto.PingRequest{})
 			if err != nil {
 				t.Fatalf("did not connect: %v", err)
 			}
@@ -56,8 +55,8 @@ func TestHealthCheck(t *testing.T) {
 	})
 
 	t.Run("Given a service and a fault dependency", func(t *testing.T) {
-		Register(WithChecker(faultInMemoryChecker{}))
-		defer Unregister()
+		healthz.Register(healthz.WithChecker(faultInMemoryChecker{}))
+		defer healthz.Unregister()
 		// Set up a connection to the server.
 		conn, err := grpc.Dial(":8080", grpc.WithInsecure())
 		if err != nil {
@@ -65,10 +64,10 @@ func TestHealthCheck(t *testing.T) {
 		}
 		defer conn.Close()
 
-		checkClient := grpc_health_v1.NewHealthClient(conn)
+		checkClient := proto.NewHealthClient(conn)
 
 		t.Run("When Checked", func(t *testing.T) {
-			_, err := checkClient.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{})
+			_, err := checkClient.Check(context.Background(), &proto.HealthCheckRequest{})
 
 			t.Run("Then is not serving", func(t *testing.T) {
 				if err != nil {
@@ -85,7 +84,7 @@ func TestHealthCheck(t *testing.T) {
 	})
 
 	t.Run("Given a GRPCServer", func(t *testing.T) {
-		lis, err := net.Listen("tcp", ":8080")
+		lis, err := net.Listen("tcp", "localhost:8080")
 		if err != nil {
 			t.Fatalf("failed to listen: %v", err)
 		}
@@ -93,8 +92,8 @@ func TestHealthCheck(t *testing.T) {
 		s := grpc.NewServer()
 		defer s.GracefulStop()
 
-		Register(WithGRPCServer(s))
-		defer Unregister()
+		healthz.Register(healthz.WithGRPCServer(s))
+		defer healthz.Unregister()
 
 		go func() {
 			_ = s.Serve(lis)
@@ -107,10 +106,10 @@ func TestHealthCheck(t *testing.T) {
 		}
 		defer conn.Close()
 
-		checkClient := grpc_health_v1.NewHealthClient(conn)
+		checkClient := proto.NewHealthClient(conn)
 
 		t.Run("When Checked", func(t *testing.T) {
-			check, err := checkClient.Check(context.Background(), &grpc_health_v1.HealthCheckRequest{})
+			check, err := checkClient.Check(context.Background(), &proto.HealthCheckRequest{})
 			if err != nil {
 				t.Fatalf("did not connect: %v", err)
 			}
@@ -123,14 +122,19 @@ func TestHealthCheck(t *testing.T) {
 	})
 
 	t.Run("Given a service and a HealthCheck HTTP Client", func(t *testing.T) {
-		Register()
-		defer Unregister()
+		healthz.Register()
+		defer healthz.Unregister()
 
 		t.Run("When Pinged via HTTP Then Pong is always true", func(t *testing.T) {
-			check, err := http.Get("http://localhost:8081/v1/ping")
+			request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://localhost:8081/v1/ping", nil)
 			if err != nil {
 				t.Fatalf("did not connect: %v", err)
 			}
+			check, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatalf("did not connect: %v", err)
+			}
+			defer check.Body.Close()
 			body, err := ioutil.ReadAll(check.Body)
 			if err != nil {
 				t.Fatalf("error fetching data: %v", err)

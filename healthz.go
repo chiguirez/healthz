@@ -8,33 +8,97 @@ import (
 	"net"
 	"net/http"
 	"reflect"
+	"sync/atomic"
+	"time"
 
-	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
 	proto "github.com/chiguirez/healthz/proto/health/v1"
 )
 
-var _checker *checker
+var _checker *serverCheckers //nolint:gochecknoglobals
 
 type checker struct {
-	srv  *grpc.Server
-	list []HealthChecker
+	hc         HealthChecker
+	lastResult *int32
 }
 
-func (c checker) Check(ctx context.Context, request *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
+type serverCheckers struct {
+	srv  *grpc.Server
+	port struct {
+		http uint16
+		grpc uint16
+	}
+	list []checker
+}
+
+func (c serverCheckers) GetGRPCPort() uint16 {
+	const defaultGRPCPort = 8080
+
+	if c.port.grpc == 0 {
+		return uint16(defaultGRPCPort)
+	}
+
+	return c.port.grpc
+}
+
+func (c serverCheckers) GetHTTPPort() uint16 {
+	const defaultHTTPPort = 8081
+
+	if c.port.http == 0 {
+		return uint16(defaultHTTPPort)
+	}
+
+	return c.port.http
+}
+
+func deferChecking(c checker) chan bool {
+	bChan := make(chan bool, 1)
+
+	tBool := map[bool]int32{
+		true:  1,
+		false: 0,
+	}
+
+	go func() {
+		result := c.hc.HealthCheck(context.Background())
+
+		atomic.StoreInt32(c.lastResult, tBool[result])
+
+		bChan <- result
+		defer close(bChan)
+	}()
+
+	return bChan
+}
+
+func (hc checker) healthCheck(ctx context.Context) bool {
+	const timeout = time.Second * 5
+
+	ctx, cancelFunc := context.WithTimeout(ctx, timeout)
+	defer cancelFunc()
+
+	select {
+	case <-deferChecking(hc):
+		return atomic.LoadInt32(hc.lastResult) == int32(1)
+	case <-ctx.Done():
+		return atomic.LoadInt32(hc.lastResult) == int32(1)
+	}
+}
+
+func (c serverCheckers) Check(ctx context.Context, _ *proto.HealthCheckRequest) (*proto.HealthCheckResponse, error) {
 	g, _ctx := errgroup.WithContext(ctx)
 
 	for _, chkr := range c.list {
 		g.Go(
-			func(chkr HealthChecker) func() error {
+			func(chkr checker) func() error {
 				return func() error {
-					if !chkr.HealthCheck(_ctx) {
+					if chkr.healthCheck(_ctx) {
 						return fmt.Errorf("%w for dependency %v", ErrUnsuccessful, reflect.TypeOf(chkr).String())
 					}
 
@@ -48,18 +112,18 @@ func (c checker) Check(ctx context.Context, request *grpc_health_v1.HealthCheckR
 		return nil, status.New(codes.Unavailable, err.Error()).Err()
 	}
 
-	return &grpc_health_v1.HealthCheckResponse{
-		Status: grpc_health_v1.HealthCheckResponse_SERVING,
+	return &proto.HealthCheckResponse{
+		Status: proto.HealthCheckResponse_SERVING,
 	}, nil
 }
 
-func (c checker) Watch(request *grpc_health_v1.HealthCheckRequest, server grpc_health_v1.Health_WatchServer) error {
+func (c serverCheckers) Watch(*proto.HealthCheckRequest, proto.Health_WatchServer) error {
 	panic("implement me")
 }
 
 var ErrUnsuccessful = errors.New("unsuccessful health check")
 
-func (c checker) Ping(_ context.Context, _ *proto.PingRequest) (*proto.PongResponse, error) {
+func (c serverCheckers) Ping(_ context.Context, _ *proto.PingRequest) (*proto.PongResponse, error) {
 	return &proto.PongResponse{
 		Pong: true,
 	}, nil
@@ -69,27 +133,40 @@ type HealthChecker interface {
 	HealthCheck(ctx context.Context) bool
 }
 
-type HealthCheckOptions func(c *checker)
+type HealthCheckOptions func(c *serverCheckers)
 
 func WithGRPCServer(srv *grpc.Server) HealthCheckOptions {
-	return func(c *checker) {
+	return func(c *serverCheckers) {
 		c.srv = srv
 	}
 }
 
 func WithChecker(chkr HealthChecker) HealthCheckOptions {
-	return func(c *checker) {
-		c.list = append(c.list, chkr)
+	return func(c *serverCheckers) {
+		c.list = append(c.list, checker{
+			hc:         chkr,
+			lastResult: new(int32),
+		})
+	}
+}
+
+func WithGRPCPort(port uint16) HealthCheckOptions {
+	return func(c *serverCheckers) {
+		c.port.grpc = port
+	}
+}
+
+func WithHTTPPort(port uint16) HealthCheckOptions {
+	return func(c *serverCheckers) {
+		c.port.http = port
 	}
 }
 
 func Register(opts ...HealthCheckOptions) {
-	var (
-		deferredStartFn func()
-	)
+	var deferredStartFn func()
 
 	if _checker == nil {
-		_checker = &checker{}
+		_checker = &serverCheckers{}
 	}
 
 	for _, opt := range opts {
@@ -100,8 +177,7 @@ func Register(opts ...HealthCheckOptions) {
 		deferredStartFn = createServer(_checker)
 	}
 
-	proto.RegisterHealthServiceServer(_checker.srv, _checker)
-	grpc_health_v1.RegisterHealthServer(_checker.srv, _checker)
+	proto.RegisterHealthServer(_checker.srv, _checker)
 
 	if deferredStartFn != nil {
 		deferredStartFn()
@@ -110,17 +186,15 @@ func Register(opts ...HealthCheckOptions) {
 	registerHTTPServer(_checker)
 }
 
-func registerHTTPServer(c *checker) {
-	const httpAddress = ":8081"
-
+func registerHTTPServer(c *serverCheckers) {
+	httpAddress := fmt.Sprintf(":%d", c.GetHTTPPort())
 	ctx := context.Background()
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	mux := runtime.NewServeMux()
-
-	_ = proto.RegisterHealthServiceHandlerServer(ctx, mux, c)
+	_ = proto.RegisterHealthHandlerServer(ctx, mux, c)
 
 	go func() {
 		_ = http.ListenAndServe(httpAddress, mux)
@@ -132,8 +206,10 @@ func Unregister() {
 	_checker = nil
 }
 
-func createServer(c *checker) func() {
-	lis, err := net.Listen("tcp", "127.0.0.1:8080")
+func createServer(c *serverCheckers) func() {
+	address := fmt.Sprintf("127.0.0.1:%d", c.GetGRPCPort())
+
+	lis, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
