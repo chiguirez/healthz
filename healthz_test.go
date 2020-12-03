@@ -122,11 +122,11 @@ func TestHealthCheck(t *testing.T) {
 	})
 
 	t.Run("Given a service and a HealthCheck HTTP Client", func(t *testing.T) {
-		healthz.Register()
+		healthz.Register(healthz.WithHTTPPort(12345))
 		defer healthz.Unregister()
 
 		t.Run("When Pinged via HTTP Then Pong is always true", func(t *testing.T) {
-			request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://localhost:8081/v1/ping", nil)
+			request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://localhost:12345/v1/ping", nil)
 			if err != nil {
 				t.Fatalf("did not connect: %v", err)
 			}

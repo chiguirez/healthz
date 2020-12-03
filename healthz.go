@@ -207,7 +207,7 @@ func Unregister() {
 }
 
 func createServer(c *serverCheckers) func() {
-	address := fmt.Sprintf("127.0.0.1:%d", c.GetGRPCPort())
+	address := fmt.Sprintf(":%d", c.GetGRPCPort())
 
 	lis, err := net.Listen("tcp", address)
 	if err != nil {
