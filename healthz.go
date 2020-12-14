@@ -98,7 +98,7 @@ func (c serverCheckers) Check(ctx context.Context, _ *proto.HealthCheckRequest) 
 		g.Go(
 			func(chkr checker) func() error {
 				return func() error {
-					if chkr.healthCheck(_ctx) {
+					if !chkr.healthCheck(_ctx) {
 						return fmt.Errorf("%w for dependency %v", ErrUnsuccessful, reflect.TypeOf(chkr).String())
 					}
 

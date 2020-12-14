@@ -68,7 +68,6 @@ func TestHealthCheck(t *testing.T) {
 
 		t.Run("When Checked", func(t *testing.T) {
 			_, err := checkClient.Check(context.Background(), &proto.HealthCheckRequest{})
-
 			t.Run("Then is not serving", func(t *testing.T) {
 				if err != nil {
 					fromError, ok := status.FromError(err)
@@ -78,6 +77,9 @@ func TestHealthCheck(t *testing.T) {
 					if fromError.Code() != codes.Unavailable {
 						t.Fatalf("expect Unavailable got : %s instead", fromError.Code().String())
 					}
+				}
+				if err == nil {
+					t.Fatal("health check expected to be not serving")
 				}
 			})
 		})
